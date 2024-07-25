@@ -1,0 +1,187 @@
+openapi: 3.0.0
+info:
+  title: Lasko Backend API
+  version: 1.0.0
+  description: API for managing printers and print jobs in the Lasko Cloud Printing solution
+
+servers:
+  - url: https://api.lasko-print.com/v1
+
+paths:
+  /printers:
+    get:
+      summary: List all available printers
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PrinterBasic"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /printers/{printerId}:
+    get:
+      summary: Get details of a specific printer
+      parameters:
+        - name: printerId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrinterDetailed"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /print-jobs:
+    post:
+      summary: Submit a print job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrintJobSubmission"
+      responses:
+        "201":
+          description: Print job created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrintJobResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /print-jobs/{jobId}:
+    get:
+      summary: Get the status of a print job
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrintJobStatus"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+components:
+  schemas:
+    PrinterBasic:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+          enum: [online, offline, error]
+
+    PrinterDetailed:
+      allOf:
+        - $ref: "#/components/schemas/PrinterBasic"
+        - type: object
+          properties:
+            capabilities:
+              type: object
+              properties:
+                color:
+                  type: boolean
+                duplex:
+                  type: boolean
+                paperSizes:
+                  type: array
+                  items:
+                    type: string
+            drivers:
+              type: array
+              items:
+                type: string
+
+    PrintJobSubmission:
+      type: object
+      required:
+        - printerId
+        - documentUrl
+      properties:
+        printerId:
+          type: string
+        documentUrl:
+          type: string
+        options:
+          type: object
+          properties:
+            copies:
+              type: integer
+            duplex:
+              type: boolean
+
+    PrintJobResponse:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [queued, processing, completed, error]
+
+    PrintJobStatus:
+      type: object
+      properties:
+        jobId:
+          type: string
+        status:
+          type: string
+          enum: [queued, processing, completed, error]
+        errorMessage:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: The specified resource was not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    Error:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
