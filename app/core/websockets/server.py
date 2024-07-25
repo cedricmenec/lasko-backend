@@ -1,8 +1,13 @@
 import asyncio
 import websockets
 import msgpack
+import logging
 from typing import Dict
 from app.core.websockets.instructions import Instruction, InstructionType
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class WebSocketServer:
     """
@@ -23,12 +28,25 @@ class WebSocketServer:
         """
         agent_id = path.split('/')[-1]
         self.active_connections[agent_id] = websocket
+        
+        # Log new connection
+        logger.info(f"New agent connected: {agent_id}")
+        
         try:
             async for message in websocket:
                 data = msgpack.unpackb(message)
+                
+                # Handle ping
+                if data.get("type") == "ping":
+                    await websocket.send(msgpack.packb({"type": "pong"}))
+                    logger.debug(f"Ping received from agent {agent_id}, sent pong")
+                    continue
+                
                 instruction = Instruction(InstructionType(data["type"]), data["payload"])
                 response = await self.process_instruction(instruction)
                 await websocket.send(msgpack.packb(response))
+        except websockets.exceptions.ConnectionClosed:
+            logger.info(f"Connection closed for agent: {agent_id}")
         finally:
             del self.active_connections[agent_id]
 
@@ -87,3 +105,13 @@ class WebSocketServer:
             await connection.send(msgpack.packb(message))
 
 websocket_server = WebSocketServer()
+
+# This function should be called when starting the server
+async def start_websocket_server(host: str, port: int):
+    server = await websockets.serve(
+        websocket_server.handle_connection,
+        host,
+        port
+    )
+    logger.info(f"WebSocket server started on {host}:{port}")
+    await server.wait_closed()

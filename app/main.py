@@ -2,11 +2,14 @@ import asyncio
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import websockets
+import logging
 
 from app.core.config import settings
 from app.api.api_v1.api import api_router
-from app.core.websockets.server import websocket_server
+from app.core.websockets.server import start_websocket_server
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def create_application() -> FastAPI:
     application = FastAPI(
@@ -31,23 +34,14 @@ def create_application() -> FastAPI:
 
 app = create_application()
 
-async def start_websocket_server():
-    await websockets.serve(
-        websocket_server.handle_connection,
-        settings.WEBSOCKET_HOST,
-        settings.WEBSOCKET_PORT
-    )
-
 @app.on_event("startup")
 async def startup_event():
-    # You can add any startup logic here
-    print("Starting up Lasko backend...")
-    asyncio.create_task(start_websocket_server())
+    logger.info("Starting up Lasko backend...")
+    asyncio.create_task(start_websocket_server(settings.WEBSOCKET_HOST, settings.WEBSOCKET_PORT))
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    # You can add any shutdown logic here
-    print("Shutting down Lasko backend...")
+    logger.info("Shutting down Lasko backend...")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=settings.PORT, reload=True)
