@@ -1,0 +1,115 @@
+{
+    "info": {
+        "_postman_id": "your-postman-id",
+        "name": "Lasko Backend API",
+        "description": "Collection for testing Lasko Backend API endpoints",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "List Printers",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "http://localhost:8000/api/v1/printers",
+                    "protocol": "http",
+                    "host": [
+                        "localhost"
+                    ],
+                    "port": "8000",
+                    "path": [
+                        "api",
+                        "v1",
+                        "printers"
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Get Printer Details",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "http://localhost:8000/api/v1/printers/{{printerId}}",
+                    "protocol": "http",
+                    "host": [
+                        "localhost"
+                    ],
+                    "port": "8000",
+                    "path": [
+                        "api",
+                        "v1",
+                        "printers",
+                        "{{printerId}}"
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Submit Print Job",
+            "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                    "mode": "raw",
+                    "raw": "{\n    \"printerId\": \"example_printer_id\",\n    \"documentUrl\": \"https://example.com/document.pdf\",\n    \"options\": {\n        \"copies\": 1,\n        \"duplex\": false\n    }\n}",
+                    "options": {
+                        "raw": {
+                            "language": "json"
+                        }
+                    }
+                },
+                "url": {
+                    "raw": "http://localhost:8000/api/v1/print-jobs",
+                    "protocol": "http",
+                    "host": [
+                        "localhost"
+                    ],
+                    "port": "8000",
+                    "path": [
+                        "api",
+                        "v1",
+                        "print-jobs"
+                    ]
+                }
+            },
+            "response": []
+        },
+        {
+            "name": "Get Print Job Status",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "http://localhost:8000/api/v1/print-jobs/{{jobId}}",
+                    "protocol": "http",
+                    "host": [
+                        "localhost"
+                    ],
+                    "port": "8000",
+                    "path": [
+                        "api",
+                        "v1",
+                        "print-jobs",
+                        "{{jobId}}"
+                    ]
+                }
+            },
+            "response": []
+        }
+    ],
+    "variable": [
+        {
+            "key": "printerId",
+            "value": "example_printer_id"
+        },
+        {
+            "key": "jobId",
+            "value": "example_job_id"
+        }
+    ]
+}
