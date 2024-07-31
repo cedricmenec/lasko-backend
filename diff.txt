@@ -1,0 +1,191 @@
+diff --git a/app/api/api_v1/api.py b/app/api/api_v1/api.py
+index 6e12034..9ff1ac8 100644
+--- a/app/api/api_v1/api.py
++++ b/app/api/api_v1/api.py
+@@ -1,6 +1,10 @@
+ from fastapi import APIRouter, Path, Body, HTTPException
+ from typing import List
+ from pydantic import BaseModel, HttpUrl
++from app.core.websockets.server import websocket_server
++from app.core.websockets.instructions import Instruction, InstructionType
++import asyncio
++import msgpack
+ 
+ """
+ Defines the main FastAPI router for the API version 1 endpoints.
+@@ -65,8 +69,44 @@ class PrintJobStatus(BaseModel):
+ # Routes
+ @api_router.get("/printers", response_model=List[PrinterBasic])
+ async def list_printers():
+-    # Implémentation à faire
+-    return []
++    """
++    List all printers from connected Lasko Agents.
++    
++    This function sends a GET_PRINTER_LIST instruction to all connected Lasko Agents
++    via WebSocket, collects their responses, and returns a consolidated list of printers.
++    """
++    
++    # Get all active connections
++    active_connections = websocket_server.active_connections
++    
++    if not active_connections:
++        raise HTTPException(status_code=503, detail="No Lasko Agents are currently connected")
++    
++    # Process responses
++    all_printers = []
++    for agent_id in active_connections.keys():
++        try:
++            response = await websocket_server.send_request(agent_id, "get_printer_list")
++            printers = response.get("printers", [])
++            all_printers.extend([PrinterBasic(**printer) for printer in printers])
++        except TimeoutError:
++            print(f"Timeout while requesting printer list from agent {agent_id}")
++        except Exception as e:
++            print(f"Error requesting printer list from agent {agent_id}: {str(e)}")
++    
++    if not all_printers:
++        raise HTTPException(status_code=404, detail="No printers found")
++    
++    return all_printers
++
++async def send_and_receive(agent_id: str, connection, instruction: Instruction):
++    try:
++        await connection.send(msgpack.packb(instruction.to_dict()))
++        response = await connection.recv()
++        return msgpack.unpackb(response)
++    except Exception as e:
++        print(f"Error communicating with agent {agent_id}: {str(e)}")
++        return None
+ 
+ @api_router.get("/printers/{printerId}", response_model=PrinterDetailed)
+ async def get_printer_details(printerId: str = Path(..., title="The ID of the printer to get")):
+diff --git a/app/core/websockets/server.py b/app/core/websockets/server.py
+index a568d06..fae7a97 100644
+--- a/app/core/websockets/server.py
++++ b/app/core/websockets/server.py
+@@ -1,6 +1,7 @@
+ import asyncio
+ import websockets
+ import msgpack
++import uuid
+ import logging
+ from typing import Dict
+ from app.core.websockets.instructions import Instruction, InstructionType
+@@ -15,6 +16,7 @@ class WebSocketServer:
+     """
+     def __init__(self):
+         self.active_connections: Dict[str, websockets.WebSocketServerProtocol] = {}
++        self.pending_requests: Dict[str, asyncio.Future] = {}
+ 
+     async def handle_connection(self, websocket: websockets.WebSocketServerProtocol, path: str):
+         """
+@@ -26,7 +28,19 @@ class WebSocketServer:
+         
+         When the connection is closed, the method removes the agent ID from the `active_connections` dictionary.
+         """
++        # Extract agent_id from the path
+         agent_id = path.split('/')[-1]
++        
++        if not agent_id:
++            logger.error("Connection attempt with empty agent_id")
++            await websocket.close(1008, "Agent ID is required")
++            return
++
++        if agent_id in self.active_connections:
++            logger.warning(f"Agent with ID {agent_id} is already connected. Closing old connection.")
++            await self.active_connections[agent_id].close(1008, "New connection initiated for this agent ID")
++
++
+         self.active_connections[agent_id] = websocket
+         
+         # Log new connection
+@@ -41,45 +55,18 @@ class WebSocketServer:
+                     await websocket.send(msgpack.packb({"type": "pong"}))
+                     logger.debug(f"Ping received from agent {agent_id}, sent pong")
+                     continue
+-                
+-                instruction = Instruction(InstructionType(data["type"]), data["payload"])
+-                response = await self.process_instruction(instruction)
+-                await websocket.send(msgpack.packb(response))
++
++                if data["type"] == "response":
++                    await self.handle_response(data)
++                elif data["type"] == "request":
++                    # Handle any requests from the agent (if applicable)
++                    pass
++    
+         except websockets.exceptions.ConnectionClosed:
+             logger.info(f"Connection closed for agent: {agent_id}")
+         finally:
+             del self.active_connections[agent_id]
+ 
+-    async def process_instruction(self, instruction: Instruction) -> dict:
+-        """
+-        Process an incoming WebSocket instruction and return a response.
+-        
+-        This method is responsible for handling different types of instructions received from connected WebSocket clients. It takes an `Instruction` object as input, which contains the instruction type and payload, and returns a dictionary containing the response data.
+-        
+-        The method currently supports the following instruction types:
+-        - `GET_PRINTER_LIST`: Returns a list of available printers.
+-        - `GET_PRINTER_STATUS`: Returns the status of the printer.
+-        - `SUBMIT_PRINT_JOB`: Submits a new print job and returns the job ID.
+-        - `GET_PRINT_JOB_STATUS`: Returns the status of a print job.
+-        - `CANCEL_PRINT_JOB`: Cancels a print job and returns a success flag.
+-        
+-        If an unknown instruction type is received, the method returns an error response.
+-        """
+-        # Implement the logic to process each instruction type
+-        # This is a placeholder implementation
+-        if instruction.type == InstructionType.GET_PRINTER_LIST:
+-            return {"printers": ["printer1", "printer2"]}
+-        elif instruction.type == InstructionType.GET_PRINTER_STATUS:
+-            return {"status": "online"}
+-        elif instruction.type == InstructionType.SUBMIT_PRINT_JOB:
+-            return {"job_id": "job1"}
+-        elif instruction.type == InstructionType.GET_PRINT_JOB_STATUS:
+-            return {"status": "printing"}
+-        elif instruction.type == InstructionType.CANCEL_PRINT_JOB:
+-            return {"success": True}
+-        else:
+-            return {"error": "Unknown instruction type"}
+-
+     async def send_message(self, agent_id: str, message: dict):
+         """
+         Sends a message to the WebSocket connection associated with the specified agent ID.
+@@ -94,6 +81,35 @@ class WebSocketServer:
+         if agent_id in self.active_connections:
+             await self.active_connections[agent_id].send(msgpack.packb(message))
+ 
++    async def send_request(self, agent_id: str, command: str, payload: dict = None):
++        if agent_id not in self.active_connections:
++            raise ValueError(f"Agent {agent_id} not connected")
++        
++        request_id = str(uuid.uuid4())
++        request = {
++            "type": "request",
++            "id": request_id,
++            "command": command,
++            "payload": payload or {}
++        }
++        
++        future = asyncio.Future()
++        self.pending_requests[request_id] = future
++
++        await self.active_connections[agent_id].send(msgpack.packb(request))
++
++        try:
++            return await asyncio.wait_for(future, timeout=10.0)  # 10 seconds timeout
++        except asyncio.TimeoutError:
++            del self.pending_requests[request_id]
++            raise TimeoutError(f"Request {request_id} from agent {agent_id} timed out ")
++        
++    async def handle_response(self, response: dict):
++        request_id = response["id"]
++        if request_id in self.pending_requests:
++            future = self.pending_requests.pop(request_id)
++            future.set_result(response["payload"])
++
+     async def broadcast(self, message: dict):
+         """
+         Broadcasts a message to all active WebSocket connections.

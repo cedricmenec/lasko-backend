@@ -1,6 +1,7 @@
 import asyncio
 import websockets
 import msgpack
+import uuid
 import logging
 from typing import Dict
 from app.core.websockets.instructions import Instruction, InstructionType
@@ -15,6 +16,7 @@ class WebSocketServer:
     """
     def __init__(self):
         self.active_connections: Dict[str, websockets.WebSocketServerProtocol] = {}
+        self.pending_requests: Dict[str, asyncio.Future] = {}
 
     async def handle_connection(self, websocket: websockets.WebSocketServerProtocol, path: str):
         """
@@ -26,7 +28,19 @@ class WebSocketServer:
         
         When the connection is closed, the method removes the agent ID from the `active_connections` dictionary.
         """
+        # Extract agent_id from the path
         agent_id = path.split('/')[-1]
+        
+        if not agent_id:
+            logger.error("Connection attempt with empty agent_id")
+            await websocket.close(1008, "Agent ID is required")
+            return
+
+        if agent_id in self.active_connections:
+            logger.warning(f"Agent with ID {agent_id} is already connected. Closing old connection.")
+            await self.active_connections[agent_id].close(1008, "New connection initiated for this agent ID")
+
+
         self.active_connections[agent_id] = websocket
         
         # Log new connection
@@ -41,44 +55,17 @@ class WebSocketServer:
                     await websocket.send(msgpack.packb({"type": "pong"}))
                     logger.debug(f"Ping received from agent {agent_id}, sent pong")
                     continue
-                
-                instruction = Instruction(InstructionType(data["type"]), data["payload"])
-                response = await self.process_instruction(instruction)
-                await websocket.send(msgpack.packb(response))
+
+                if data["type"] == "response":
+                    await self.handle_response(data)
+                elif data["type"] == "request":
+                    # Handle any requests from the agent (if applicable)
+                    pass
+    
         except websockets.exceptions.ConnectionClosed:
             logger.info(f"Connection closed for agent: {agent_id}")
         finally:
             del self.active_connections[agent_id]
-
-    async def process_instruction(self, instruction: Instruction) -> dict:
-        """
-        Process an incoming WebSocket instruction and return a response.
-        
-        This method is responsible for handling different types of instructions received from connected WebSocket clients. It takes an `Instruction` object as input, which contains the instruction type and payload, and returns a dictionary containing the response data.
-        
-        The method currently supports the following instruction types:
-        - `GET_PRINTER_LIST`: Returns a list of available printers.
-        - `GET_PRINTER_STATUS`: Returns the status of the printer.
-        - `SUBMIT_PRINT_JOB`: Submits a new print job and returns the job ID.
-        - `GET_PRINT_JOB_STATUS`: Returns the status of a print job.
-        - `CANCEL_PRINT_JOB`: Cancels a print job and returns a success flag.
-        
-        If an unknown instruction type is received, the method returns an error response.
-        """
-        # Implement the logic to process each instruction type
-        # This is a placeholder implementation
-        if instruction.type == InstructionType.GET_PRINTER_LIST:
-            return {"printers": ["printer1", "printer2"]}
-        elif instruction.type == InstructionType.GET_PRINTER_STATUS:
-            return {"status": "online"}
-        elif instruction.type == InstructionType.SUBMIT_PRINT_JOB:
-            return {"job_id": "job1"}
-        elif instruction.type == InstructionType.GET_PRINT_JOB_STATUS:
-            return {"status": "printing"}
-        elif instruction.type == InstructionType.CANCEL_PRINT_JOB:
-            return {"success": True}
-        else:
-            return {"error": "Unknown instruction type"}
 
     async def send_message(self, agent_id: str, message: dict):
         """
@@ -93,6 +80,35 @@ class WebSocketServer:
         """
         if agent_id in self.active_connections:
             await self.active_connections[agent_id].send(msgpack.packb(message))
+
+    async def send_request(self, agent_id: str, command: str, payload: dict = None):
+        if agent_id not in self.active_connections:
+            raise ValueError(f"Agent {agent_id} not connected")
+        
+        request_id = str(uuid.uuid4())
+        request = {
+            "type": "request",
+            "id": request_id,
+            "command": command,
+            "payload": payload or {}
+        }
+        
+        future = asyncio.Future()
+        self.pending_requests[request_id] = future
+
+        await self.active_connections[agent_id].send(msgpack.packb(request))
+
+        try:
+            return await asyncio.wait_for(future, timeout=10.0)  # 10 seconds timeout
+        except asyncio.TimeoutError:
+            del self.pending_requests[request_id]
+            raise TimeoutError(f"Request {request_id} from agent {agent_id} timed out ")
+        
+    async def handle_response(self, response: dict):
+        request_id = response["id"]
+        if request_id in self.pending_requests:
+            future = self.pending_requests.pop(request_id)
+            future.set_result(response["payload"])
 
     async def broadcast(self, message: dict):
         """
