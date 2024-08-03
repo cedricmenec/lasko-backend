@@ -2,8 +2,7 @@ from fastapi import APIRouter, Path, Body, HTTPException
 from typing import List
 from pydantic import BaseModel, HttpUrl
 from app.core.websockets.server import websocket_server
-from app.core.websockets.instructions import Instruction, InstructionType
-import asyncio
+from app.core.websockets.instructions import Instruction
 import msgpack
 
 """
