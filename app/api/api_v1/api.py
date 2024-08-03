@@ -1,6 +1,10 @@
 from fastapi import APIRouter, Path, Body, HTTPException
 from typing import List
 from pydantic import BaseModel, HttpUrl
+from app.core.websockets.server import websocket_server
+from app.core.websockets.instructions import Instruction, InstructionType
+import asyncio
+import msgpack
 
 """
 Defines the main FastAPI router for the API version 1 endpoints.
@@ -65,8 +69,44 @@ class PrintJobStatus(BaseModel):
 # Routes
 @api_router.get("/printers", response_model=List[PrinterBasic])
 async def list_printers():
-    # Implémentation à faire
-    return []
+    """
+    List all printers from connected Lasko Agents.
+    
+    This function sends a GET_PRINTER_LIST instruction to all connected Lasko Agents
+    via WebSocket, collects their responses, and returns a consolidated list of printers.
+    """
+    
+    # Get all active connections
+    active_connections = websocket_server.active_connections
+    
+    if not active_connections:
+        raise HTTPException(status_code=503, detail="No Lasko Agents are currently connected")
+    
+    # Process responses
+    all_printers = []
+    for agent_id in active_connections.keys():
+        try:
+            response = await websocket_server.send_request(agent_id, "get_printer_list")
+            printers = response.get("printers", [])
+            all_printers.extend([PrinterBasic(**printer) for printer in printers])
+        except TimeoutError:
+            print(f"Timeout while requesting printer list from agent {agent_id}")
+        except Exception as e:
+            print(f"Error requesting printer list from agent {agent_id}: {str(e)}")
+    
+    if not all_printers:
+        raise HTTPException(status_code=404, detail="No printers found")
+    
+    return all_printers
+
+async def send_and_receive(agent_id: str, connection, instruction: Instruction):
+    try:
+        await connection.send(msgpack.packb(instruction.to_dict()))
+        response = await connection.recv()
+        return msgpack.unpackb(response)
+    except Exception as e:
+        print(f"Error communicating with agent {agent_id}: {str(e)}")
+        return None
 
 @api_router.get("/printers/{printerId}", response_model=PrinterDetailed)
 async def get_printer_details(printerId: str = Path(..., title="The ID of the printer to get")):
