@@ -4,7 +4,6 @@ import msgpack
 import uuid
 import logging
 from typing import Dict
-from app.core.websockets.instructions import Instruction, InstructionType
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
