@@ -49,12 +49,6 @@ class WebSocketServer:
             async for message in websocket:
                 data = msgpack.unpackb(message)
                 
-                # Handle ping
-                if data.get("type") == "ping":
-                    await websocket.send(msgpack.packb({"type": "pong"}))
-                    logger.debug(f"Ping received from agent {agent_id}, sent pong")
-                    continue
-
                 if data["type"] == "response":
                     await self.handle_response(data)
                 elif data["type"] == "request":
