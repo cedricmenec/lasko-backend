@@ -4,7 +4,6 @@ import msgpack
 import uuid
 import logging
 from typing import Dict
-from app.core.websockets.instructions import Instruction, InstructionType
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,12 +49,6 @@ class WebSocketServer:
             async for message in websocket:
                 data = msgpack.unpackb(message)
                 
-                # Handle ping
-                if data.get("type") == "ping":
-                    await websocket.send(msgpack.packb({"type": "pong"}))
-                    logger.debug(f"Ping received from agent {agent_id}, sent pong")
-                    continue
-
                 if data["type"] == "response":
                     await self.handle_response(data)
                 elif data["type"] == "request":
